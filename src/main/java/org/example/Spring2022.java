@@ -45,7 +45,7 @@ class Player {
                 int type = in.nextInt(); // 0=monster, 1=your hero, 2=opponent hero
                 // System.err.println(entity.id + " " + type);
 
-                entity.coord = new Coord(in.nextInt(), in.nextInt()); // Position of this entity
+                entity.location = new Coord(in.nextInt(), in.nextInt()); // Position of this entity
                 entity.shieldLife = in.nextInt(); // Ignore for this league; Count down until shield spell fades
                 entity.isControlled = in.nextInt(); // Ignore for this league; Equals 1 when this entity is under a control spell
                 entity.health = in.nextInt(); // Remaining health of this monster
@@ -55,7 +55,7 @@ class Player {
                 entity.threatFor = in.nextInt(); // Given this monster's trajectory, is it a threat to 1=your base, 2=your opponent's base, 0=neither
 
                 if (type == 0) { //monster
-                    int distanceToBase = entity.coord.distanceTo(base.location);
+                    int distanceToBase = entity.location.distanceTo(base.location);
                     monsters.put(entity.id, entity);
                     targets.addPriority(entity.id, distanceToBase, entity.threatFor);
                 }
@@ -72,19 +72,29 @@ class Player {
 
             targets.sortDistances();
 
-            if (targets.priorities.size() >= 3) {
+            if (targets.priorities.size() > 1) {
                 for (Priority priority: targets.priorities) {
                     error("id: " + priority.id + ", dist:"+ priority.distanceToBase);
                 }
-
-                // error("" + targets.priorities.get(0).distanceToBase);
-                // error("" + targets.priorities.get(1).distanceToBase);
-                // error("" + targets.priorities.get(2).distanceToBase);
             }
+
+            int minManaStored = 50;
+            int rangeWind = 1250;
 
             for (Priority priority: targets.priorities) {
                 if (heroes.freeHeroes == 0){
                     break;
+                }
+                Entity enemy = monsters.get(priority.id);
+                if (priority.distanceToBase < 1200) {
+                    Hero selectedHero = heroes.assignHero(monsters.get(priority.id));
+                    int distanceToEnemy = selectedHero.entity.location.distanceTo(enemy.location);
+                    if (base.mana>10 && distanceToEnemy<rangeWind) {
+                        selectedHero.sendWind = true;
+                        Coord sendWindTo = selectedHero.entity.location.moveMe(base.delta()*10, base.delta()*10);
+                        selectedHero.nextMove = sendWindTo;
+                    }
+                    continue;
                 }
                 if (priority.distanceToBase < 5000) {
                     heroes.assignHero(monsters.get(priority.id));
@@ -97,28 +107,30 @@ class Player {
                 break;
             }
 
-            ArrayList<Coord> defauls = new ArrayList<>();
-            int delta = 4500;
-            if (base.location.posX != 0) {
-                delta *= -1;
-            }
-            defauls.add(new Coord(base.location.posX + delta, base.location.posX + delta));
-            defauls.add(new Coord(base.location.posX, base.location.posX + delta));
-            defauls.add(new Coord(base.location.posX + delta, base.location.posX));
-            
+            ArrayList<Coord> defaults = new ArrayList<>();
+            int delta = base.delta() * 4500;
+            defaults.add(new Coord(base.location.posX + delta, base.location.posX + delta));
+            defaults.add(new Coord(base.location.posX, base.location.posX + delta));
+            defaults.add(new Coord(base.location.posX + delta, base.location.posX));
+
+            error("" + defaults.get(0));
+
             for (int i = 0; i < heroesPerPlayer; i++) {
 
                 Hero hero = heroes.heroes.get(i);
-                if (hero.targetId == -1) { //Sin objetivo
-                    hero.nextMove = defauls.get(0);
-                    defauls.remove(0);
+                if (hero.targetId == -1) {  //Sin objetivo
+                    hero.nextMove = defaults.get(0);
+                    defaults.remove(0);
                 } else {
-                    hero.nextMove = monsters.get(hero.targetId).getNextMove();
+                    if (hero.sendWind) {    //Habilitado para hacer SPELL WIND
+                        System.out.println("SPELL WIND " + hero.nextMove.posX + " " + hero.nextMove.posY);
+                        continue;
+                    } else {                //SOLO ATACAR
+                        hero.nextMove = monsters.get(hero.targetId).getNextMove();
+                    }
                 }
                 System.out.println("MOVE " + hero.nextMove.posX + " " + hero.nextMove.posY);
 
-                // In the first league: MOVE <x> <y> | WAIT; In later leagues: | SPELL <spellParams>;
-                // System.out.println("WAIT");
             }
         }
     }
@@ -131,10 +143,12 @@ class Hero {
     public Coord defaultLocation;
     public boolean isDefending;
     public Coord nextMove;
+    public boolean sendWind;
     public Hero(){
         this.defaultLocation = new Coord(4000, 4000);
         this.targetId = -1;
         this.isDefending = false;
+        this.sendWind = false;
     }
 }
 
@@ -145,7 +159,7 @@ class Heroes {
         heroes = new ArrayList<>();
         freeHeroes = 3;
     }
-    public void assignHero(Entity monster) {
+    public Hero assignHero(Entity monster) {
         int selectedHero = -1;
         int bestDistance = 20000;
         for (int i=0; i<heroes.size(); i++) {
@@ -153,7 +167,7 @@ class Heroes {
             if (hero.targetId != -1) {
                 continue;
             }
-            int distanceToMonster = heroes.get(i).entity.coord.distanceTo(monster.coord);
+            int distanceToMonster = heroes.get(i).entity.location.distanceTo(monster.location);
             if (distanceToMonster < bestDistance) {
                 selectedHero = i;
             }
@@ -161,6 +175,7 @@ class Heroes {
         heroes.get(selectedHero).targetId = monster.id;
         this.freeHeroes--;
         System.err.println(monster.id + " asignado al heroe:" + selectedHero);
+        return heroes.get(selectedHero);
     }
 }
 
@@ -202,7 +217,7 @@ class Targets {
 
 class Entity {
 
-    public Coord coord;
+    public Coord location;
     public int id;
     public int shieldLife;
     public int isControlled;
@@ -214,7 +229,7 @@ class Entity {
     //public int distanceToBase;
     public Entity(){}
     public Coord getNextMove(){
-        return new Coord(coord.posX + vx, coord.posY + vy);
+        return new Coord(location.posX + vx, location.posY + vy);
     }
 
 }
@@ -233,7 +248,9 @@ class Coord {
         int dY = this.posY - anotherCoord.posY;
         return (int) Math.sqrt( dX*dX + dY*dY );
     }
-
+    public Coord moveMe(int dX, int dY) {
+        return (new Coord(this.posX+dX, this.posY+dY));
+    }
 
 }
 
@@ -245,6 +262,14 @@ class Base {
 
     public Base(Coord coord) {
         this.location = coord;
+    }
+
+    public int delta() {
+        if (location.posX == 0) {
+            return 1;
+        } else {
+            return -1;
+        }
     }
 
 }
